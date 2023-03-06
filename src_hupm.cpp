@@ -8,14 +8,31 @@
 #include <unistd.h>
 #include <json.h>
 #include <curl/curl.h>
+#include <sys/stat.h>
 using namespace std;
-int DEBUG = 1;
+int DEBUG = 0;
+
 size_t strappnet(char* ptr, size_t x, size_t y, string *str) {
 	str->append(ptr);
 	return 0;
 }
 
-int checkdb();
+char* extract_version(char* pkgname) {
+	char* str = (char*)calloc(strlen(pkgname), 1);
+	int p=0;
+	for (int i=strlen(pkgname)-1; i>=0; i--) {
+		if (pkgname[i] == '-') break;
+		str[p] = pkgname[i];p++;
+	}
+	str = (char*)realloc(str, strlen(str));
+	char* ver = (char*)calloc(strlen(str), 1);
+	p = 0;
+	for (int i=strlen(str)-1; i>=0;i--) {ver[p] = str[i];p++;}
+	free(str);
+	return ver;
+}
+
+int fexist(const char* fname) {struct stat bf; return (stat(fname, &bf) == 0);}
 
 int main(int argc, char **argv) {
 	const char* operation = nullptr; /*install update refresh remove*/
@@ -109,6 +126,7 @@ int main(int argc, char **argv) {
 		for (int i=0; i<pkgreq.size(); i++) {
 			DIR *dir = opendir(dbpath.c_str());
 			int found=0;
+			const char* version;
 			while ((dirst = readdir(dir)) != NULL) {
 				if (!strcmp(dirst->d_name, ".") && !strcmp(dirst->d_name, "..")) continue;
 				sqlite3 *db;
@@ -120,7 +138,10 @@ int main(int argc, char **argv) {
 				sqlite3_bind_text(stmt, 1, argv[2], -1, NULL);
 				res = sqlite3_step(stmt);
 				if (res == SQLITE_DONE) {sqlite3_finalize(stmt);sqlite3_close(db);continue;}
-				else if (res == SQLITE_ROW) {found=1;break;}
+				else if (res == SQLITE_ROW) {
+					version = (const char*)sqlite3_column_blob(stmt, 9);
+					found=1;break;
+				}
 				sqlite3_finalize(stmt);sqlite3_close(db);
 			}
 			closedir(dir);
@@ -128,23 +149,51 @@ int main(int argc, char **argv) {
 				std::cout << "\033[1;31mError\033[0m: Package not found: " << argv[2] << std::endl;
 				return 1;
 			} else std::cout << "Found pkg\n";
-		}
 		/*Comprueba si el paquete está instalado. Si está
 		 * instalado debe comprobar si es la misma versión
 		 * que la de la db.*/
-		/*Implementación: Busca en /var/lib/hupm/pkgs si
-		 * se encuentra un directorio con el nombre del pa-
-		 * quete. Si lo encuentra está instalado. La versión
-		 * de la DB está en la DB, la versión instalada está
-		 * en el archivo desc(json) dentro del directorio
-		 * corrspondiente.
-		dir = opendir("/var/lib/hupm/pkgs");found=0;
-		while ((dirst = readdir(dir)) != NULL) {
-			if (!strcmp(dirst->d_name,pkgreq[i])) {
-				if (DEBUG) std::cout << "DEBUG: Package '" <<pkgreq[i]<<"' installed\n";
+			/*Check if insdat.db exists*/
+			found = 0;
+			if (!fexist("/var/lib/hupm/pkgs/insdat.db")) {
+				sqlite3 *db;
+				sqlite3_open("/var/lib/hupm/pkgs/insdat.db", &db);
+				sqlite3_stmt *stmt;
+				const char *sql = "CREATE TABLE pkgtab (id INTEGER PRIMARY KEY AUTOINCREMENT, basename CHAR(40), pkgname CHAR(50), size INTEGER, deps TEXT, exdeps TEXT, version CHAR(15), author CHAR(25), desc TEXT);";
+				sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
+				sqlite3_step(stmt);
+				sqlite3_finalize(stmt);
+				sqlite3_close(db);
+			} else {
+				sqlite3 *db;
+				sqlite3_stmt *stmt;
+				sqlite3_open("/var/lib/hupm/pkgs/insdat.db", &db);
+				const char* sql = "SELECT * FROM pkgtab WHERE basename=?";
+				sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
+				sqlite3_bind_text(stmt, 1, argv[2], -1, NULL);
+				int res = sqlite3_step(stmt);
+				if (res == SQLITE_ROW) {
+					const char* version2 = (const char*)sqlite3_column_blob(stmt, 9);
+					found = 1;
+				}
+				sqlite3_finalize(stmt);
+				sqlite3_close(db);
+			}
+			if (found) {
+				puts("Package is already installed.");
+				if (!strcmp(version, version2)) {
+					/*Same version. Ask to reinstall*/
+				} else {
+					/*Different version. Ask to update*/
+				}
+			} else {
+				puts("Package is not installed.");
+				/*Begin installation*/
+				/*Solve dependencies*/
+				/*Download packages*/
+				/*Uncompress tarballs*/
+				/*execute huscript*/
 			}
 		}
-		closedir(dir);*/
 		/*Si no está instalado, se resuelven dependencias,
 		 * se imprimen, se imprime el peso total y se con-
 		 * sulta al usuario para proceder.*/
