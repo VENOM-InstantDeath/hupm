@@ -32,6 +32,98 @@ char* extract_version(char* pkgname) {
 	return ver;
 }
 
+std::vector<const char*> vecsplit(const char* deps) {
+	std::vector<const char*> vec;
+	if (!strcmp(deps, "-")) return vec;
+	char* x = (char*)calloc(40, 1);
+	int c=0;
+	for (int i=0; i<strlen(deps); i++) {
+		if (deps[i] == ' ') {
+			vec.push_back(x);
+			x = (char*)calloc(40,1);c=0;
+		}
+		else {x[c] = deps[i];c++;}
+	}
+	vec.push_back(x);
+	return vec;
+}
+
+void printvec(std::vector<const char*> s) {
+	std::cout << "[";
+	if (!s.size()) {std::cout << "]\n";return;}
+	for (int i=0; i<s.size()-1; i++) {
+		std::cout << s[i] << ", ";
+	}
+	std::cout << s[s.size()-1] << "]\n";
+}
+
+int vecchkelement(std::vector<const char*> li, const char* pkg) {
+	for (int i=0; i<li.size(); i++) {
+		if (!strcmp(li[i], pkg)) return 1;
+	}
+	return 0;
+}
+
+int vecindex(const char* pkg, std::vector<const char*> v) {
+	for (int i=0; i<v.size(); i++) {
+		if (!strcmp(pkg, v[i])) return i;
+	}
+	throw "out of bounds";
+}
+
+std::vector<const char*> extractdeps(const char* pkg) {
+	struct dirent *dirst;
+	std::string dbpath = "/var/lib/hupm/data/";
+	DIR *dir = opendir(dbpath.c_str());
+	int found=0;
+	const char* result;
+	while ((dirst = readdir(dir)) != NULL) {
+		if (!strcmp(dirst->d_name, ".") && !strcmp(dirst->d_name, "..")) continue;
+		sqlite3 *db;
+		sqlite3_stmt *stmt;
+		sqlite3_open((dbpath+dirst->d_name).c_str(), &db);
+		int res;
+		const char* sql = "SELECT * FROM pkgtab WHERE basename=?";
+		sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
+		sqlite3_bind_text(stmt, 1, pkg, -1, NULL);
+		res = sqlite3_step(stmt);
+		if (res == SQLITE_DONE) {sqlite3_finalize(stmt);sqlite3_close(db);continue;}
+		else if (res == SQLITE_ROW) {
+			result = (const char*)sqlite3_column_blob(stmt, 4);
+			found=1;break;
+		}
+		sqlite3_finalize(stmt);sqlite3_close(db);
+	}
+	closedir(dir);
+	if (!found) {
+		throw "Package not found";
+	} else {
+		/*std::cout << "in extractdeps: pkg: " << pkg << std::endl;
+		std::cout << "in extractdeps: result: " << "<" << result << ">"<< std::endl;*/
+		std::vector<const char*> toret = vecsplit(result);
+		/*std::cout << "in extractdeps: toret size: " << toret.size() << std::endl;
+		printvec(toret);*/
+		return toret;
+	}
+}
+
+void solve(const char* pkg, std::vector<const char*> *li) {
+	std::vector<const char*> res = extractdeps(pkg);
+	/*printvec(res);*/
+	if (!res.size()) {
+		if (!vecchkelement(*li, pkg)) {
+			li->push_back(pkg);
+		}
+	} else {
+		for (int i=0; i<res.size();i++) {
+			solve(res[i], li);
+		}
+		if (!vecchkelement(*li, pkg)) {
+			li->push_back(pkg);
+		}
+	}
+}
+
 int fexist(const char* fname) {struct stat bf; return (stat(fname, &bf) == 0);}
 
 int main(int argc, char **argv) {
@@ -53,6 +145,7 @@ int main(int argc, char **argv) {
 			cout << "\t(r)refresh\tRefresh hupm databases." << endl;
 			cout << "\t(rm)remove\tRemove specified pkgs." << endl;
 			cout << "Options" << endl;
+			cout << "\t-h --help\tShow help message and exit." << endl;
 			cout << "\t-p --path\tSpecify pkg's path (local installation)" << endl;
 			cout << "\t-c --cache\tInstall/Search/Remove from cache." << endl;
 			cout << "\t--noconfirm\tDon't ask user for confirmation." << endl;
@@ -127,6 +220,10 @@ int main(int argc, char **argv) {
 			DIR *dir = opendir(dbpath.c_str());
 			int found=0;
 			const char* version;
+			const char* version2;
+			std::vector<const char*> exdeps;
+			//std::vector<const char*> deps;
+			const char* deps;
 			while ((dirst = readdir(dir)) != NULL) {
 				if (!strcmp(dirst->d_name, ".") && !strcmp(dirst->d_name, "..")) continue;
 				sqlite3 *db;
@@ -139,7 +236,9 @@ int main(int argc, char **argv) {
 				res = sqlite3_step(stmt);
 				if (res == SQLITE_DONE) {sqlite3_finalize(stmt);sqlite3_close(db);continue;}
 				else if (res == SQLITE_ROW) {
-					version = (const char*)sqlite3_column_blob(stmt, 9);
+					version = (const char*)sqlite3_column_blob(stmt, 6);
+					exdeps = vecsplit((const char*)sqlite3_column_blob(stmt, 5));
+					deps = (const char*)sqlite3_column_blob(stmt, 4);
 					found=1;break;
 				}
 				sqlite3_finalize(stmt);sqlite3_close(db);
@@ -172,7 +271,7 @@ int main(int argc, char **argv) {
 				sqlite3_bind_text(stmt, 1, argv[2], -1, NULL);
 				int res = sqlite3_step(stmt);
 				if (res == SQLITE_ROW) {
-					const char* version2 = (const char*)sqlite3_column_blob(stmt, 9);
+					version2 = (const char*)sqlite3_column_blob(stmt, 6);
 					found = 1;
 				}
 				sqlite3_finalize(stmt);
@@ -187,6 +286,14 @@ int main(int argc, char **argv) {
 				}
 			} else {
 				puts("Package is not installed.");
+				std::vector<const char*> li;
+				solve(pkgreq[i], &li);
+				printf("The following packages will be installed:\n");
+				printf("  ");
+				for (int i=0; i<li.size(); i++) {
+					printf("%s ", li[i]);
+				}
+				printf("\n");
 				/*Begin installation*/
 				/*Solve dependencies*/
 				/*Download packages*/
