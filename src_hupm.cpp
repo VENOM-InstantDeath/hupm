@@ -17,6 +17,15 @@ size_t strappnet(char* ptr, size_t x, size_t y, string *str) {
 	return 0;
 }
 
+double sizesum(std::vector<int> vec) {
+	double size = 0;
+	for (int i=0; i<vec.size(); i++) {
+		size += vec[i];
+	}
+	size /= 1000;
+	return size;
+}
+
 char* extract_version(char* pkgname) {
 	char* str = (char*)calloc(strlen(pkgname), 1);
 	int p=0;
@@ -222,8 +231,7 @@ int main(int argc, char **argv) {
 			const char* version;
 			const char* version2;
 			std::vector<const char*> exdeps;
-			//std::vector<const char*> deps;
-			const char* deps;
+			std::vector<int> pkgsize;
 			while ((dirst = readdir(dir)) != NULL) {
 				if (!strcmp(dirst->d_name, ".") && !strcmp(dirst->d_name, "..")) continue;
 				sqlite3 *db;
@@ -238,7 +246,7 @@ int main(int argc, char **argv) {
 				else if (res == SQLITE_ROW) {
 					version = (const char*)sqlite3_column_blob(stmt, 6);
 					exdeps = vecsplit((const char*)sqlite3_column_blob(stmt, 5));
-					deps = (const char*)sqlite3_column_blob(stmt, 4);
+					pkgsize.push_back(sqlite3_column_int(stmt, 3));
 					found=1;break;
 				}
 				sqlite3_finalize(stmt);sqlite3_close(db);
@@ -247,7 +255,7 @@ int main(int argc, char **argv) {
 			if (!found) {
 				std::cout << "\033[1;31mError\033[0m: Package not found: " << argv[2] << std::endl;
 				return 1;
-			} else std::cout << "Found pkg\n";
+			} else std::cout << "\033[1;32mDEBUG\033[0m: Found pkg\n";
 		/*Comprueba si el paquete está instalado. Si está
 		 * instalado debe comprobar si es la misma versión
 		 * que la de la db.*/
@@ -278,25 +286,54 @@ int main(int argc, char **argv) {
 				sqlite3_close(db);
 			}
 			if (found) {
-				puts("Package is already installed.");
+				puts("\033[1;32mDEBUG\033[0m: Package is already installed.");
 				if (!strcmp(version, version2)) {
 					/*Same version. Ask to reinstall*/
 				} else {
 					/*Different version. Ask to update*/
 				}
 			} else {
-				puts("Package is not installed.");
+				puts("\033[1;32mDEBUG\033[0m: Package is not installed.");
+				/*First, exdeps*/
+				std::cout << "Checking external deps...\n";
+				std::vector<const char*> exli;
+				for (int i=0; i<exdeps.size(); i++) {
+					char* cmd = new char[34]();
+					strcat(cmd, "pacman -Q ");
+					strcat(cmd, exdeps[i]);
+					strcat(cmd, " &> /dev/null");
+					int cmdres = system(cmd);
+					if (cmdres) {
+						exli.push_back(exdeps[i]);
+					} else std::cout << "\033[1;32mDEBUG\033[0m: Pkg " << exdeps[i] << " already installed\n";
+				}
+				if (exli.size()) {
+					std::cout << "The following external dependencies will be installed:\n  ";
+					for (int i=0; i<exli.size(); i++) {
+						std::cout << exli[i] << " ";
+					}
+					std::cout << "\n\n";
+				}
+				/*Then, deps*/
 				std::vector<const char*> li;
 				solve(pkgreq[i], &li);
-				printf("The following packages will be installed:\n");
-				printf("  ");
+				std::cout << "The following " << li.size() << " packages will be installed:\n  ";
 				for (int i=0; i<li.size(); i++) {
-					printf("%s ", li[i]);
+					std::cout << li[i] << " ";
 				}
-				printf("\n");
-				/*Begin installation*/
-				/*Solve dependencies*/
-				/*Download packages*/
+				std::cout << "\n\n";
+				/*Calculate size of pkgs to install by summing
+				 * the size field on the database.*/
+				std::cout << "Packages's total size " << sizesum(pkgsize) << "Kb\n";
+				/*Ask to proceed*/
+				std::cout << ":: Do you want to continue? [Y/n] ";
+				char procopt = getchar();
+				if (procopt != 'y' && procopt != 'Y' && procopt != '\n') {
+					std::cout << "Aborted.\n";
+					return 0;
+				}
+				/*<-- Begin installation -->*/
+				/*Download every packages*/
 				/*Uncompress tarballs*/
 				/*execute huscript*/
 			}
