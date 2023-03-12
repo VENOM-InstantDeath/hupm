@@ -66,6 +66,15 @@ void printvec(std::vector<const char*> s) {
 	std::cout << s[s.size()-1] << "]\n";
 }
 
+void printvec(std::vector<int> s) {
+	std::cout << "[";
+	if (!s.size()) {std::cout << "]\n";return;}
+	for (int i=0; i<s.size()-1; i++) {
+		std::cout << s[i] << ", ";
+	}
+	std::cout << s[s.size()-1] << "]\n";
+}
+
 int vecchkelement(std::vector<const char*> li, const char* pkg) {
 	for (int i=0; i<li.size(); i++) {
 		if (!strcmp(li[i], pkg)) return 1;
@@ -80,12 +89,12 @@ int vecindex(const char* pkg, std::vector<const char*> v) {
 	throw "out of bounds";
 }
 
-std::vector<const char*> extractdeps(const char* pkg) {
+std::vector<const void*> extractfields(const char* pkg, char* fields) {
 	struct dirent *dirst;
 	std::string dbpath = "/var/lib/hupm/data/";
 	DIR *dir = opendir(dbpath.c_str());
 	int found=0;
-	const char* result;
+	std::vector<const void*> blobvec;
 	while ((dirst = readdir(dir)) != NULL) {
 		if (!strcmp(dirst->d_name, ".") && !strcmp(dirst->d_name, "..")) continue;
 		sqlite3 *db;
@@ -98,7 +107,9 @@ std::vector<const char*> extractdeps(const char* pkg) {
 		res = sqlite3_step(stmt);
 		if (res == SQLITE_DONE) {sqlite3_finalize(stmt);sqlite3_close(db);continue;}
 		else if (res == SQLITE_ROW) {
-			result = (const char*)sqlite3_column_blob(stmt, 4);
+			for (int i=0; i<sizeof(fields); i++) {
+				blobvec.push_back(sqlite3_column_blob(stmt, fields[i]));
+			}
 			found=1;break;
 		}
 		sqlite3_finalize(stmt);sqlite3_close(db);
@@ -107,28 +118,62 @@ std::vector<const char*> extractdeps(const char* pkg) {
 	if (!found) {
 		throw "Package not found";
 	} else {
-		/*std::cout << "in extractdeps: pkg: " << pkg << std::endl;
-		std::cout << "in extractdeps: result: " << "<" << result << ">"<< std::endl;*/
-		std::vector<const char*> toret = vecsplit(result);
-		/*std::cout << "in extractdeps: toret size: " << toret.size() << std::endl;
-		printvec(toret);*/
-		return toret;
+		return blobvec;
 	}
 }
 
-void solve(const char* pkg, std::vector<const char*> *li) {
-	std::vector<const char*> res = extractdeps(pkg);
-	/*printvec(res);*/
+void extsolve(char* pkg, vector<const char*> *external) {
+	char opts[] = {5};
+	std::vector<const void*> fields = extractfields(pkg, opts);
+	std::vector<const char*> res = vecsplit((const char*)fields[0]);
+	if (!res.size()) return;
+	for (int i=0; i<res.size(); i++) {
+		if (!vecchkelement(*external, res[i])) {
+			external->push_back(res[i]);
+		}
+	}
+}
+
+void solve(const char* pkg, std::vector<const char*> *install, std::vector<const char*> *update, std::vector<int> *size) {
+	char opts[2] = {4,3,6};
+	std::vector<const void*> fields = extractfields(pkg, opts);
+	std::vector<const char*> res = vecsplit((const char*)fields[0]);
+	const char* version = (const char*)fields[2];
+	const char* version2;
+	int found = 0;
+	/*Check local*/
+	sqlite3 *db;
+	sqlite3_stmt *stmt;
+	sqlite3_open("/var/lib/hupm/pkgs/insdat.db", &db);
+	const char* sql = "SELECT * FROM pkgtab WHERE basename=?";
+	sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
+	sqlite3_bind_text(stmt, 1, pkg, -1, NULL);
+	int res = sqlite3_step(stmt);
+	if (res == SQLITE_ROW) {
+		version2 = (const char*)sqlite3_column_blob(stmt, 6);
+		found = 1;
+	}
+	sqlite3_finalize(stmt);
+	sqlite3_close(db);
+	if (found) {
+		if (strcmp(version, version2)) {
+			update->push_back(pkg);
+		} else {
+		}
+	}
+	/*end*/
 	if (!res.size()) {
-		if (!vecchkelement(*li, pkg)) {
-			li->push_back(pkg);
+		if (!vecchkelement(*install, pkg)) {
+			install->push_back(pkg);
+			size->push_back(atoi((const char*)fields[1]));
 		}
 	} else {
 		for (int i=0; i<res.size();i++) {
-			solve(res[i], li);
+			solve(res[i], install, size);
 		}
-		if (!vecchkelement(*li, pkg)) {
-			li->push_back(pkg);
+		if (!vecchkelement(*install, pkg)) {
+			install->push_back(pkg);
+			size->push_back(atoi((const char*)fields[1]));
 		}
 	}
 }
@@ -225,13 +270,16 @@ int main(int argc, char **argv) {
 		 * especificado.*/
 		struct dirent *dirst;
 		std::string dbpath = "/var/lib/hupm/data/";
+		std::vector<int> pkgsize;  // Size of packages
+		std::vector<const char*> install;  // vector of packages to install
+		std::vector<const char*> update;  // vector of packages to update
+		std::vector<const char*> external;  // vector of external packages to install
 		for (int i=0; i<pkgreq.size(); i++) {
+			std::cout << "\033[1;32mDEBUG\033[0m: ciclo: " << i << std::endl;
 			DIR *dir = opendir(dbpath.c_str());
 			int found=0;
 			const char* version;
 			const char* version2;
-			std::vector<const char*> exdeps;
-			std::vector<int> pkgsize;
 			while ((dirst = readdir(dir)) != NULL) {
 				if (!strcmp(dirst->d_name, ".") && !strcmp(dirst->d_name, "..")) continue;
 				sqlite3 *db;
@@ -240,20 +288,19 @@ int main(int argc, char **argv) {
 				int res;
 				const char* sql = "SELECT * FROM pkgtab WHERE basename=?";
 				sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
-				sqlite3_bind_text(stmt, 1, argv[2], -1, NULL);
+				sqlite3_bind_text(stmt, 1, pkgreq[i], -1, NULL);
 				res = sqlite3_step(stmt);
 				if (res == SQLITE_DONE) {sqlite3_finalize(stmt);sqlite3_close(db);continue;}
 				else if (res == SQLITE_ROW) {
 					version = (const char*)sqlite3_column_blob(stmt, 6);
-					exdeps = vecsplit((const char*)sqlite3_column_blob(stmt, 5));
-					pkgsize.push_back(sqlite3_column_int(stmt, 3));
 					found=1;break;
 				}
 				sqlite3_finalize(stmt);sqlite3_close(db);
 			}
 			closedir(dir);
+			std::cout << "\033[1;32mDEBUG\033[0m: found: " << found << std::endl;
 			if (!found) {
-				std::cout << "\033[1;31mError\033[0m: Package not found: " << argv[2] << std::endl;
+				std::cout << "\033[1;31mError\033[0m: Package not found: " << pkgreq[i] << std::endl;
 				return 1;
 			} else std::cout << "\033[1;32mDEBUG\033[0m: Found pkg\n";
 		/*Comprueba si el paquete está instalado. Si está
@@ -289,61 +336,66 @@ int main(int argc, char **argv) {
 				puts("\033[1;32mDEBUG\033[0m: Package is already installed.");
 				if (!strcmp(version, version2)) {
 					/*Same version. Ask to reinstall*/
+					/*Don't ask, notify about the reinstallation*/
 				} else {
-					/*Different version. Ask to update*/
+					/*Different version. Update*/
+					//solve(pkgreq);
 				}
 			} else {
 				puts("\033[1;32mDEBUG\033[0m: Package is not installed.");
-				/*First, exdeps*/
-				std::cout << "Checking external deps...\n";
-				std::vector<const char*> exli;
-				for (int i=0; i<exdeps.size(); i++) {
-					char* cmd = new char[34]();
-					strcat(cmd, "pacman -Q ");
-					strcat(cmd, exdeps[i]);
-					strcat(cmd, " &> /dev/null");
-					int cmdres = system(cmd);
-					if (cmdres) {
-						exli.push_back(exdeps[i]);
-					} else std::cout << "\033[1;32mDEBUG\033[0m: Pkg " << exdeps[i] << " already installed\n";
-				}
-				if (exli.size()) {
-					std::cout << "The following external dependencies will be installed:\n  ";
-					for (int i=0; i<exli.size(); i++) {
-						std::cout << exli[i] << " ";
-					}
-					std::cout << "\n\n";
-				}
-				/*Then, deps*/
-				std::vector<const char*> li;
-				solve(pkgreq[i], &li);
-				std::cout << "The following " << li.size() << " packages will be installed:\n  ";
-				for (int i=0; i<li.size(); i++) {
-					std::cout << li[i] << " ";
-				}
-				std::cout << "\n\n";
-				/*Calculate size of pkgs to install by summing
-				 * the size field on the database.*/
-				std::cout << "Packages's total size " << sizesum(pkgsize) << "Kb\n";
-				/*Ask to proceed*/
-				std::cout << ":: Do you want to continue? [Y/n] ";
-				char procopt = getchar();
-				if (procopt != 'y' && procopt != 'Y' && procopt != '\n') {
-					std::cout << "Aborted.\n";
-					return 0;
-				}
-				/*<-- Begin installation -->*/
-				/*Download every packages*/
-				/*Uncompress tarballs*/
-				/*execute huscript*/
+				/*First, external*/
+				extsolve(pkgreq[i], &external);
+				/*Then, internal*/
+				solve(pkgreq[i], &install, &pkgsize);
 			}
 		}
-		/*Si no está instalado, se resuelven dependencias,
-		 * se imprimen, se imprime el peso total y se con-
-		 * sulta al usuario para proceder.*/
-
-		/*Si está instalado, se consulta si se quiere actu-
-		 * alizar.*/
+		/*First, external*/
+		std::cout << "Checking external deps...\n"; /*TODO: Will move it*/
+		for (int i=0; i<external.size(); i++) {
+			char* cmd = new char[34]();
+			strcat(cmd, "pacman -Q ");
+			strcat(cmd, external[i]);
+			strcat(cmd, " &> /dev/null");
+			int cmdres = system(cmd);
+			if (!cmdres) {
+				std::cout << "\033[1;32mDEBUG\033[0m: Pkg " << external[i] << " already installed\n";
+				external.erase(external.begin() + i);
+			}
+		}
+		if (external.size()) {
+			std::cout << "The following external dependencies will be installed:\n  ";
+			for (int i=0; i<external.size(); i++) {
+				std::cout << external[i] << " ";
+			}
+			std::cout << "\n\n";
+		}
+		if (update.size()) {
+			std::cout << "The following " << update.size() << " packages will be updated:\n  ";
+			for (int i=0; i<update.size(); i++) {
+				std::cout << update[i] << " ";
+			}
+			std::cout << "\n\n";
+		}
+		/*Then, internal*/
+		std::cout << "The following " << install.size() << " packages will be installed:\n  ";
+		for (int i=0; i<install.size(); i++) {
+			std::cout << install[i] << " ";
+		}
+		std::cout << "\n\n";
+		/*Calculate size of pkgs to install by summing
+		* the size field on the database.*/
+		std::cout << "Packages's total size " << sizesum(pkgsize) << "Kb\n";
+		/*Ask to proceed*/
+		std::cout << ":: Do you want to continue? [Y/n] ";
+		char procopt = getchar();
+		if (procopt != 'y' && procopt != 'Y' && procopt != '\n') {
+			std::cout << "Aborted.\n";
+			return 0;
+		}
+		/*<-- Begin installation -->*/
+		/*Download every packages*/
+		/*Uncompress tarballs*/
+		/*execute huscript*/
 	}
 	if (operation == "update");
 	if (operation == "remove");
