@@ -12,6 +12,11 @@
 using namespace std;
 int DEBUG = 0;
 
+struct pkgstruct {
+	std::vector<const char*> pkg;
+	std::vector<const char*> db;
+};
+
 size_t strappnet(char* ptr, size_t x, size_t y, string *str) {
 	str->append(ptr);
 	return 0;
@@ -89,7 +94,7 @@ int vecindex(const char* pkg, std::vector<const char*> v) {
 	throw "out of bounds";
 }
 
-std::vector<const void*> extractfields(const char* pkg, char* fields) {
+std::vector<const void*> extractfields(const char* pkg, char* fields, int nf) {
 	struct dirent *dirst;
 	std::string dbpath = "/var/lib/hupm/data/";
 	DIR *dir = opendir(dbpath.c_str());
@@ -107,9 +112,12 @@ std::vector<const void*> extractfields(const char* pkg, char* fields) {
 		res = sqlite3_step(stmt);
 		if (res == SQLITE_DONE) {sqlite3_finalize(stmt);sqlite3_close(db);continue;}
 		else if (res == SQLITE_ROW) {
-			for (int i=0; i<sizeof(fields); i++) {
+			for (int i=0; i<nf; i++) {
 				blobvec.push_back(sqlite3_column_blob(stmt, fields[i]));
 			}
+			char* name = new char[256]();
+			strcpy(name, dirst->d_name);
+			blobvec.push_back((void*)name);
 			found=1;break;
 		}
 		sqlite3_finalize(stmt);sqlite3_close(db);
@@ -124,7 +132,7 @@ std::vector<const void*> extractfields(const char* pkg, char* fields) {
 
 void extsolve(char* pkg, vector<const char*> *external) {
 	char opts[] = {5};
-	std::vector<const void*> fields = extractfields(pkg, opts);
+	std::vector<const void*> fields = extractfields(pkg, opts, 1);
 	std::vector<const char*> res = vecsplit((const char*)fields[0]);
 	if (!res.size()) return;
 	for (int i=0; i<res.size(); i++) {
@@ -134,12 +142,14 @@ void extsolve(char* pkg, vector<const char*> *external) {
 	}
 }
 
-void solve(const char* pkg, std::vector<const char*> *install, std::vector<const char*> *update, std::vector<int> *size) {
-	char opts[2] = {4,3,6};
-	std::vector<const void*> fields = extractfields(pkg, opts);
+void solve(const char* pkg, struct pkgstruct *install, struct pkgstruct *update, std::vector<int> *size) {
+	char opts[3] = {4,3,6};
+	std::vector<const void*> fields = extractfields(pkg, opts, 3);
 	std::vector<const char*> res = vecsplit((const char*)fields[0]);
 	const char* version = (const char*)fields[2];
 	const char* version2;
+	char* dbname = (char*)fields[3];
+	//std::cout << dbname << std::endl;
 	int found = 0;
 	/*Check local*/
 	sqlite3 *db;
@@ -148,33 +158,41 @@ void solve(const char* pkg, std::vector<const char*> *install, std::vector<const
 	const char* sql = "SELECT * FROM pkgtab WHERE basename=?";
 	sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
 	sqlite3_bind_text(stmt, 1, pkg, -1, NULL);
-	int res = sqlite3_step(stmt);
-	if (res == SQLITE_ROW) {
+	int sqlres = sqlite3_step(stmt);
+	if (sqlres == SQLITE_ROW) {
 		version2 = (const char*)sqlite3_column_blob(stmt, 6);
 		found = 1;
 	}
 	sqlite3_finalize(stmt);
 	sqlite3_close(db);
-	if (found) {
-		if (strcmp(version, version2)) {
-			update->push_back(pkg);
-		} else {
-		}
-	}
 	/*end*/
 	if (!res.size()) {
-		if (!vecchkelement(*install, pkg)) {
-			install->push_back(pkg);
-			size->push_back(atoi((const char*)fields[1]));
+		if (!vecchkelement(install->pkg, pkg)) {
+			if (!found) {
+				install->pkg.push_back(pkg);
+				install->db.push_back(dbname);
+			}
+			if (found && strcmp(version, version2) && !vecchkelement(update->pkg, pkg)) {
+				update->pkg.push_back(pkg);
+				update->db.push_back(dbname);
+			}
 		}
+		size->push_back(atoi((const char*)fields[1]));
 	} else {
 		for (int i=0; i<res.size();i++) {
-			solve(res[i], install, size);
+			solve(res[i], install, update, size);
 		}
-		if (!vecchkelement(*install, pkg)) {
-			install->push_back(pkg);
-			size->push_back(atoi((const char*)fields[1]));
+		if (!vecchkelement(install->pkg, pkg)) {
+			if (!found) {
+				install->pkg.push_back(pkg);
+				install->db.push_back(dbname);
+			}
+			if (found && strcmp(version, version2) && !vecchkelement(update->pkg, pkg)) {
+				update->pkg.push_back(pkg);
+				update->db.push_back(dbname);
+			}
 		}
+		size->push_back(atoi((const char*)fields[1]));
 	}
 }
 
@@ -271,8 +289,8 @@ int main(int argc, char **argv) {
 		struct dirent *dirst;
 		std::string dbpath = "/var/lib/hupm/data/";
 		std::vector<int> pkgsize;  // Size of packages
-		std::vector<const char*> install;  // vector of packages to install
-		std::vector<const char*> update;  // vector of packages to update
+		struct pkgstruct install;  // vector of packages to install
+		struct pkgstruct update;  // vector of packages to update
 		std::vector<const char*> external;  // vector of external packages to install
 		for (int i=0; i<pkgreq.size(); i++) {
 			std::cout << "\033[1;32mDEBUG\033[0m: ciclo: " << i << std::endl;
@@ -337,16 +355,17 @@ int main(int argc, char **argv) {
 				if (!strcmp(version, version2)) {
 					/*Same version. Ask to reinstall*/
 					/*Don't ask, notify about the reinstallation*/
+					std::cout << pkgreq[i] << " is already installed and up to date. \033[1;33mIt will be reinstalled.\033[0m\n";
 				} else {
 					/*Different version. Update*/
-					//solve(pkgreq);
+					update.pkg.push_back(pkgreq[i]); /*No deps solving here*/
 				}
 			} else {
 				puts("\033[1;32mDEBUG\033[0m: Package is not installed.");
 				/*First, external*/
 				extsolve(pkgreq[i], &external);
 				/*Then, internal*/
-				solve(pkgreq[i], &install, &pkgsize);
+				solve(pkgreq[i], &install, &update, &pkgsize);
 			}
 		}
 		/*First, external*/
@@ -357,6 +376,7 @@ int main(int argc, char **argv) {
 			strcat(cmd, external[i]);
 			strcat(cmd, " &> /dev/null");
 			int cmdres = system(cmd);
+			delete[] cmd;
 			if (!cmdres) {
 				std::cout << "\033[1;32mDEBUG\033[0m: Pkg " << external[i] << " already installed\n";
 				external.erase(external.begin() + i);
@@ -369,17 +389,17 @@ int main(int argc, char **argv) {
 			}
 			std::cout << "\n\n";
 		}
-		if (update.size()) {
-			std::cout << "The following " << update.size() << " packages will be updated:\n  ";
-			for (int i=0; i<update.size(); i++) {
-				std::cout << update[i] << " ";
+		if (update.pkg.size()) {
+			std::cout << "The following " << update.pkg.size() << " packages will be updated:\n  ";
+			for (int i=0; i<update.pkg.size(); i++) {
+				std::cout << update.pkg[i] << " ";
 			}
 			std::cout << "\n\n";
 		}
 		/*Then, internal*/
-		std::cout << "The following " << install.size() << " packages will be installed:\n  ";
-		for (int i=0; i<install.size(); i++) {
-			std::cout << install[i] << " ";
+		std::cout << "The following " << install.pkg.size() << " packages will be installed:\n  ";
+		for (int i=0; i<install.pkg.size(); i++) {
+			std::cout << install.pkg[i] << " ";
 		}
 		std::cout << "\n\n";
 		/*Calculate size of pkgs to install by summing
@@ -394,6 +414,47 @@ int main(int argc, char **argv) {
 		}
 		/*<-- Begin installation -->*/
 		/*Download every packages*/
+		for (int i=0; i<install.pkg.size(); i++) {
+			std::string baseurl = "https://raw.githubusercontent.com/VENOM-InstantDeath/";
+			std::string basepath = "/var/lib/hupm/data/"; basepath += install.db[i];
+			std::string cachepath = "/var/lib/hupm/pkg/";
+			char* nm = new char[strlen(install.db[i])+1]();
+			strcpy(nm, install.db[i]); nm[strlen(nm)-3] = 0;
+			baseurl += nm; baseurl += "/main/";
+			delete[] nm;
+			sqlite3 *db;
+			std::cout << "\033[1;32mDEBUG\033[0m: " << basepath << '\n';
+			sqlite3_open(basepath.c_str(), &db);
+			sqlite3_stmt *stmt;
+			const char* sql = "SELECT * FROM pkgtab WHERE basename=?;";
+			int res = sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
+			if (res != SQLITE_OK) {
+				std::cout << "\033[1;32mDEBUG\033[0m: prepare: " << sqlite3_errmsg(db) << std::endl;
+			}
+			sqlite3_bind_text(stmt, 1, install.pkg[i], -1, NULL);
+			res = sqlite3_step(stmt);
+			const char* pkgname = (const char*)sqlite3_column_blob(stmt, 2);
+			baseurl += pkgname;
+			cachepath += pkgname; cachepath += ".tar.gz";
+			std::cout << "\033[1;32mDEBUG\033[0m: " << baseurl << '\n';
+			sqlite3_finalize(stmt);
+			sqlite3_close(db);
+			std::cout << "\033[1;32mDEBUG\033[0m: cachepath: " << cachepath << '\n';
+			CURL *curl= curl_easy_init();
+			CURLcode reqcode;
+			FILE *tarball = fopen(cachepath.c_str(), "w+");
+			std::cout << "\033[1;32mDEBUG\033[0m: File has been opened\n";
+			curl_easy_setopt(curl, CURLOPT_URL, baseurl.c_str());
+			curl_easy_setopt(curl, CURLOPT_WRITEDATA, tarball);
+			std::cout << "\033[1;32mDEBUG\033[0m: Options setted\n";
+			reqcode = curl_easy_perform(curl);
+			if (reqcode == CURLE_OK) {
+				std::cout << "\033[1;32mOK\033[0m\n";
+			} else {
+				std::cout << "\033[1;31mError\033[0m\n";
+			}
+			curl_easy_cleanup(curl);
+		}
 		/*Uncompress tarballs*/
 		/*execute huscript*/
 	}
