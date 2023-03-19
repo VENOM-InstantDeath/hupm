@@ -11,7 +11,9 @@
 #include <curl/curl.h>
 #include <sys/stat.h>
 #define PLATFORM "arch"
-int DEBUG = 0;
+#define HU_PREFIX ""
+#define HU_TMP "/tmp"
+int DEBUG = 1;
 
 struct pkgstruct {
 	std::vector<const char*> pkg;
@@ -97,7 +99,7 @@ int vecindex(const char* pkg, std::vector<const char*> v) {
 
 std::vector<const void*> extractfields(const char* pkg, char* fields, int nf) {
 	struct dirent *dirst;
-	std::string dbpath = "/var/lib/hupm/data/";
+	std::string dbpath = HU_PREFIX; dbpath += "/var/lib/hupm/data/";
 	DIR *dir = opendir(dbpath.c_str());
 	int found=0;
 	std::vector<const void*> blobvec;
@@ -155,7 +157,8 @@ void solve(const char* pkg, struct pkgstruct *install, struct pkgstruct *update,
 	/*Check local*/
 	sqlite3 *db;
 	sqlite3_stmt *stmt;
-	sqlite3_open("/var/lib/hupm/pkgs/insdat.db", &db);
+	std::string pathwpref = HU_PREFIX; pathwpref += "/var/lib/hupm/pkgs/insdat.db";
+	sqlite3_open(pathwpref.c_str(), &db);
 	const char* sql = "SELECT * FROM pkgtab WHERE basename=?";
 	sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
 	sqlite3_bind_text(stmt, 1, pkg, -1, NULL);
@@ -200,12 +203,15 @@ void solve(const char* pkg, struct pkgstruct *install, struct pkgstruct *update,
 int fexist(const char* fname) {struct stat bf; return (stat(fname, &bf) == 0);}
 
 int main(int argc, char **argv) {
+	setenv("HU_PREFIX", HU_PREFIX, 0);
+	setenv("HU_TMP", HU_TMP, 0);
 	const char* operation = nullptr; /*install update refresh remove*/
 	int options[3]; /*0.path 1.cache 2.no-confirm*/
 	std::vector<char*> pkgreq;
 	memset(options, 0, sizeof(options));
 	if (argc < 2) {
 		puts("\033[1;31mError\033[0m: No arguments provided");
+		unsetenv("HU_PREFIX"); unsetenv("HU_TMP");
 		return 1;
 	}
 	/*This for checks command line arguments*/
@@ -222,6 +228,7 @@ int main(int argc, char **argv) {
 			std::cout << "\t-p --path\tSpecify pkg's path (local installation)" << std::endl;
 			std::cout << "\t-c --cache\tInstall/Search/Remove from cache." << std::endl;
 			std::cout << "\t--noconfirm\tDon't ask user for confirmation." << std::endl;
+			unsetenv("HU_PREFIX"); unsetenv("HU_TMP");
 			return 0;
 		}
 		else if (!strcmp(argv[i], "-p") || !strcmp(argv[i], "--path")) {options[0] = 1;}
@@ -235,7 +242,7 @@ int main(int argc, char **argv) {
 			if (operation==nullptr) {operation="refresh";} else {std::cout<<"\033[1;31mError\033[0m: More than one command specified.\n";}}
 		else if (!strcmp(argv[i], "remove") || !strcmp(argv[i], "rm")) {
 			if (operation==nullptr) {operation="remove";} else {std::cout<<"\033[1;31mError\033[0m: More than one command specified.\n";}}
-		else if (argv[i][0] == '-' || operation==nullptr){std::cout << "\033[1;31mError\033[0m: argument '" << argv[i] << "' is invalid."<<std::endl;return 1;}
+		else if (argv[i][0] == '-' || operation==nullptr){std::cout << "\033[1;31mError\033[0m: argument '" << argv[i] << "' is invalid."<<std::endl;unsetenv("HU_PREFIX");unsetenv("HU_TMP");return 1;}
 		else {pkgreq.push_back(argv[i]);}
 	}
 	/*Check for invalid set of options*/
@@ -245,13 +252,15 @@ int main(int argc, char **argv) {
 	/*start dealing with the operations*/
 	if (operation == nullptr) {
 		puts("\033[1;31mError\033[0m: No command specified");
+		unsetenv("HU_PREFIX"); unsetenv("HU_TMP");
 		return 1;
 	}
 	if (operation == "refresh") {
 		/* Check permissions */
-		if (getuid()) {std::cout << "\033[1;31mError\033[0m: Insufficient permissions." << std::endl;return 1;}
+		if (getuid()) {std::cout << "\033[1;31mError\033[0m: Insufficient permissions." << std::endl;unsetenv("HU_PREFIX");unsetenv("HU_TMP");return 1;}
 		/*Read config*/
-		std::ifstream conf("/var/lib/hupm/conf.json");
+		std::string pathwpref = HU_PREFIX; pathwpref += "/var/lib/hupm/conf.json";
+		std::ifstream conf(pathwpref.c_str());
 		std::stringstream jstr;
 		jstr << conf.rdbuf();
 		/* In a loop, we download each db
@@ -260,7 +269,8 @@ int main(int argc, char **argv) {
 		json_object_object_foreach(jobj, key, val) {
 			json_object *kobj = json_object_object_get(jobj, key);
 			std::string dbname = key; dbname += ".db";
-			std::string fdbname = "/var/lib/hupm/data/"; fdbname += dbname;
+			std::string fdbname = HU_PREFIX;
+			fdbname += "/var/lib/hupm/data/"; fdbname += dbname;
 			std::string url = json_object_get_string(kobj);
 			url += dbname;
 			std::cout << "Downloading " << key <<"... ";
@@ -279,16 +289,17 @@ int main(int argc, char **argv) {
 		}
 	}
 	if (operation == "install") {
-		if (getuid()) {std::cout << "\033[1;31mError\033[0m: Insufficient permissions." << std::endl;return 1;}
+		if (getuid()) {std::cout << "\033[1;31mError\033[0m: Insufficient permissions." << std::endl;unsetenv("HU_PREFIX");unsetenv("HU_TMP");return 1;}
 		if (!pkgreq.size()) {
 			puts("\033[1;31mError\033[0m: No packages specified.");
+			unsetenv("HU_PREFIX"); unsetenv("HU_TMP");
 			return 1;
 		}
 		/*Itera en /var/lib/hupm/db abriendo cada db
 		 * y buscando si existe un paquete con el nombre
 		 * especificado.*/
 		struct dirent *dirst;
-		std::string dbpath = "/var/lib/hupm/data/";
+		std::string dbpath = HU_PREFIX; dbpath += "/var/lib/hupm/data/";
 		std::vector<int> pkgsize;  // Size of packages
 		struct pkgstruct install;  // vector of packages to install
 		struct pkgstruct update;  // vector of packages to update
@@ -321,6 +332,7 @@ int main(int argc, char **argv) {
 			if (DEBUG) std::cout << "\033[1;32mDEBUG\033[0m: found: " << found << std::endl;
 			if (!found) {
 				std::cout << "\033[1;31mError\033[0m: Package not found: " << pkgreq[i] << std::endl;
+				unsetenv("HU_PREFIX"); unsetenv("HU_TMP");
 				return 1;
 			} else {if (DEBUG) std::cout << "\033[1;32mDEBUG\033[0m: Found pkg\n";}
 		/*Comprueba si el paquete está instalado. Si está
@@ -328,9 +340,10 @@ int main(int argc, char **argv) {
 		 * que la de la db.*/
 			/*Check if insdat.db exists*/
 			found = 0;
-			if (!fexist("/var/lib/hupm/pkgs/insdat.db")) {
+			std::string pathwpref1 = HU_PREFIX; pathwpref1 += "/var/lib/hupm/pkgs/insdat.db";
+			if (!fexist(pathwpref1.c_str())) {
 				sqlite3 *db;
-				sqlite3_open("/var/lib/hupm/pkgs/insdat.db", &db);
+				sqlite3_open(pathwpref1.c_str(), &db);
 				sqlite3_stmt *stmt;
 				const char *sql = "CREATE TABLE pkgtab (id INTEGER PRIMARY KEY AUTOINCREMENT, basename CHAR(40), pkgname CHAR(50), size INTEGER, deps TEXT, exdeps TEXT, version CHAR(15), author CHAR(25), desc TEXT);";
 				sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
@@ -340,7 +353,7 @@ int main(int argc, char **argv) {
 			} else {
 				sqlite3 *db;
 				sqlite3_stmt *stmt;
-				sqlite3_open("/var/lib/hupm/pkgs/insdat.db", &db);
+				sqlite3_open(pathwpref1.c_str(), &db);
 				const char* sql = "SELECT * FROM pkgtab WHERE basename=?";
 				sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
 				sqlite3_bind_text(stmt, 1, argv[2], -1, NULL);
@@ -373,7 +386,7 @@ int main(int argc, char **argv) {
 		/*First, external*/
 		for (int i=0; i<external.size(); i++) {
 			char* cmd = new char[34]();
-			std::string cmdreq = "pacman -Q";
+			std::string cmdreq = "pacman -Q ";
 			cmdreq += external[i]; cmdreq += " &> /dev/null";
 			int cmdres = system(cmdreq.c_str());
 			if (!cmdres) {
@@ -410,6 +423,7 @@ int main(int argc, char **argv) {
 		char procopt = getchar();
 		if (procopt != 'y' && procopt != 'Y' && procopt != '\n') {
 			std::cout << "Aborted.\n";
+			unsetenv("HU_PREFIX"); unsetenv("HU_TMP");
 			return 0;
 		}
 		/*<-- Begin installation -->*/
@@ -417,8 +431,8 @@ int main(int argc, char **argv) {
 		/*Download every packages*/
 		for (int i=0; i<install.pkg.size(); i++) {
 			std::string baseurl = "https://raw.githubusercontent.com/VENOM-InstantDeath/";
-			std::string basepath = "/var/lib/hupm/data/"; basepath += install.db[i];
-			std::string cachepath = "/var/cache/hupm/pkg/";
+			std::string basepath = HU_PREFIX; basepath += "/var/lib/hupm/data/"; basepath += install.db[i];
+			std::string cachepath = HU_PREFIX; cachepath += "/var/cache/hupm/pkg/";
 			char* nm = new char[strlen(install.db[i])+1]();
 			strcpy(nm, install.db[i]); nm[strlen(nm)-3] = 0;
 			baseurl += nm; baseurl += "/main/";
@@ -466,11 +480,12 @@ int main(int argc, char **argv) {
 		for (int i=0; i<install.pkg.size(); i++) {
 			if (DEBUG) std::cout << "\033[1;32mDEBUG\033[0m: " << install.pkg[i] << ' ' << pkgnames[i] << '\n';
 			std::cout << '(' << i+1 << '/' << install.pkg.size() << ") Extracting " << pkgnames[i] << "  ";
-			DIR* dir = opendir("/tmp/hupm");
-			if (!dir) mkdir("/tmp/hupm", 0700);
-			std::string cmd = "tar xf /var/cache/hupm/pkg/";
+			std::string pathwpref = HU_TMP; pathwpref += "/hupm";
+			DIR* dir = opendir(pathwpref.c_str());
+			if (!dir) mkdir(pathwpref.c_str(), 0700);
+			std::string cmd = "tar xf "; cmd += HU_PREFIX; cmd += "/var/cache/hupm/pkg/";
 			cmd += pkgnames[i]; cmd += ".tar.gz";
-			cmd += " -C /tmp/hupm/";
+			cmd += " -C "; cmd += HU_TMP; cmd += "/hupm/";
 			int cmdres = system(cmd.c_str());
 			if (!cmdres) std::cout << "\033[1;32mOK\033[0m\n";
 			else std::cout << "\033[1;31mERROR\033[0m\n";
@@ -479,7 +494,7 @@ int main(int argc, char **argv) {
 		if (external.size()) {
 			std::cout << ":: Installing external dependencies...\n";
 			for (int i=0; i<install.pkg.size(); i++) {
-				std::string basepath = "/tmp/hupm/"; basepath += install.pkg[i];
+				std::string basepath = HU_TMP; basepath += "/tmp/hupm/"; basepath += install.pkg[i];
 				basepath += "/.huscript";
 				/*Replace external with a new vector including huscript external deps. TODO*/
 				std::string cmdreq = "bash "; cmdreq += basepath; cmdreq += " extdeps ";
@@ -504,6 +519,7 @@ int main(int argc, char **argv) {
 						char procopt = getchar();
 						if (procopt != 'y' && procopt != 'Y' && procopt != '\n') {
 							std::cout << "Aborted.\n";
+							unsetenv("HU_PREFIX"); unsetenv("HU_TMP");
 							return 0;
 						}
 						std::cout << "\033[3A\033[0J";
@@ -514,6 +530,7 @@ int main(int argc, char **argv) {
 						cmdres = system(cmd.c_str());
 						if (cmdres) {
 							std::cout << "\033[1;31mError\033[0m: An error ocurred while installing external dependencies.\n";
+							unsetenv("HU_PREFIX"); unsetenv("HU_TMP");
 							return 1;
 						}
 					}
@@ -523,7 +540,7 @@ int main(int argc, char **argv) {
 		/*execute huscript*/
 		for (int i=0; i<install.pkg.size(); i++) {
 			std::cout << '(' << i+1 << '/' << install.pkg.size() << ") Installing " << pkgnames[i] << "  ";
-			std::string path = "/tmp/hupm/"; path += install.pkg[i];
+			std::string path = HU_TMP; path += "/hupm/"; path += install.pkg[i];
 			/*getcwd then chdir*/
 			char olddir[PATH_MAX];
 			getcwd(olddir, sizeof(olddir));
@@ -542,5 +559,6 @@ int main(int argc, char **argv) {
 	curl_easy_setopt(curl, CURLOPT_URL);
 	curl_easy_setopt(curl, CURLOPT_WRITEDATA);
 	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION);*/
+	unsetenv("HU_PREFIX"); unsetenv("HU_TMP");
 	return 0;
 }
