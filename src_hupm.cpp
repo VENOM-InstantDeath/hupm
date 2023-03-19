@@ -10,10 +10,10 @@
 #include <json.h>
 #include <curl/curl.h>
 #include <sys/stat.h>
-#define PLATFORM "arch"
-#define HU_PREFIX ""
-#define HU_TMP "/tmp"
-int DEBUG = 1;
+#define PLATFORM "debian"
+#define HU_PREFIX "/data/data/com.termux/files"
+#define HU_TMP "/data/data/com.termux/files/usr/tmp"
+int DEBUG = 0;
 
 struct pkgstruct {
 	std::vector<const char*> pkg;
@@ -386,7 +386,7 @@ int main(int argc, char **argv) {
 		/*First, external*/
 		for (int i=0; i<external.size(); i++) {
 			char* cmd = new char[34]();
-			std::string cmdreq = "pacman -Q ";
+			std::string cmdreq = "dpkg -l ";
 			cmdreq += external[i]; cmdreq += " &> /dev/null";
 			int cmdres = system(cmdreq.c_str());
 			if (!cmdres) {
@@ -480,7 +480,7 @@ int main(int argc, char **argv) {
 		for (int i=0; i<install.pkg.size(); i++) {
 			if (DEBUG) std::cout << "\033[1;32mDEBUG\033[0m: " << install.pkg[i] << ' ' << pkgnames[i] << '\n';
 			std::cout << '(' << i+1 << '/' << install.pkg.size() << ") Extracting " << pkgnames[i] << "  ";
-			std::string pathwpref = HU_TMP; pathwpref += "/hupm";
+			std::string pathwpref = HU_TMP; pathwpref += "/tmp/hupm";
 			DIR* dir = opendir(pathwpref.c_str());
 			if (!dir) mkdir(pathwpref.c_str(), 0700);
 			std::string cmd = "tar xf "; cmd += HU_PREFIX; cmd += "/var/cache/hupm/pkg/";
@@ -505,8 +505,8 @@ int main(int argc, char **argv) {
 				std::vector<const char*> extvec = vecsplit(buffer);
 				for (int e=0; e<extvec.size(); e++) {
 					std::cout << '(' << e+1 << '/' << external.size() << ") Installing " << external[e] << "  ";
-					std::string cmd = "pacman -S ";
-					cmd += external[e]; cmd += " --noconfirm &> /dev/null";
+					std::string cmd = "apt install ";
+					cmd += external[e]; cmd += " -y &> /dev/null";
 					int cmdres = system(cmd.c_str());
 					if (!cmdres) std::cout << "\033[1;32mOK\033[0m\n";
 					else {
@@ -540,7 +540,7 @@ int main(int argc, char **argv) {
 		/*execute huscript*/
 		for (int i=0; i<install.pkg.size(); i++) {
 			std::cout << '(' << i+1 << '/' << install.pkg.size() << ") Installing " << pkgnames[i] << "  ";
-			std::string path = HU_TMP; path += "/hupm/"; path += install.pkg[i];
+			std::string path = HU_PREFIX; path += "/tmp/hupm/"; path += install.pkg[i];
 			/*getcwd then chdir*/
 			char olddir[PATH_MAX];
 			getcwd(olddir, sizeof(olddir));
