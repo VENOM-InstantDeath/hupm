@@ -12,6 +12,7 @@
 #include <sys/stat.h>
 #define PLATFORM "arch"
 #define HU_PREFIX ""
+#define HU_USR "/usr"
 #define HU_TMP "/tmp"
 int DEBUG = 1;
 
@@ -204,6 +205,7 @@ int fexist(const char* fname) {struct stat bf; return (stat(fname, &bf) == 0);}
 
 int main(int argc, char **argv) {
 	setenv("HU_PREFIX", HU_PREFIX, 0);
+	setenv("HU_USR", HU_USR, 0);
 	setenv("HU_TMP", HU_TMP, 0);
 	const char* operation = nullptr; /*install update refresh remove*/
 	int options[3]; /*0.path 1.cache 2.no-confirm*/
@@ -211,7 +213,7 @@ int main(int argc, char **argv) {
 	memset(options, 0, sizeof(options));
 	if (argc < 2) {
 		puts("\033[1;31mError\033[0m: No arguments provided");
-		unsetenv("HU_PREFIX"); unsetenv("HU_TMP");
+		unsetenv("HU_PREFIX"); unsetenv("HU_USR"); unsetenv("HU_TMP");
 		return 1;
 	}
 	/*This for checks command line arguments*/
@@ -228,7 +230,7 @@ int main(int argc, char **argv) {
 			std::cout << "\t-p --path\tSpecify pkg's path (local installation)" << std::endl;
 			std::cout << "\t-c --cache\tInstall/Search/Remove from cache." << std::endl;
 			std::cout << "\t--noconfirm\tDon't ask user for confirmation." << std::endl;
-			unsetenv("HU_PREFIX"); unsetenv("HU_TMP");
+			unsetenv("HU_PREFIX"); unset("HU_USR"); unsetenv("HU_TMP");
 			return 0;
 		}
 		else if (!strcmp(argv[i], "-p") || !strcmp(argv[i], "--path")) {options[0] = 1;}
@@ -242,7 +244,7 @@ int main(int argc, char **argv) {
 			if (operation==nullptr) {operation="refresh";} else {std::cout<<"\033[1;31mError\033[0m: More than one command specified.\n";}}
 		else if (!strcmp(argv[i], "remove") || !strcmp(argv[i], "rm")) {
 			if (operation==nullptr) {operation="remove";} else {std::cout<<"\033[1;31mError\033[0m: More than one command specified.\n";}}
-		else if (argv[i][0] == '-' || operation==nullptr){std::cout << "\033[1;31mError\033[0m: argument '" << argv[i] << "' is invalid."<<std::endl;unsetenv("HU_PREFIX");unsetenv("HU_TMP");return 1;}
+		else if (argv[i][0] == '-' || operation==nullptr){std::cout << "\033[1;31mError\033[0m: argument '" << argv[i] << "' is invalid."<<std::endl;unsetenv("HU_PREFIX");unsetenv("HU_USR");unsetenv("HU_TMP");return 1;}
 		else {pkgreq.push_back(argv[i]);}
 	}
 	/*Check for invalid set of options*/
@@ -252,12 +254,12 @@ int main(int argc, char **argv) {
 	/*start dealing with the operations*/
 	if (operation == nullptr) {
 		puts("\033[1;31mError\033[0m: No command specified");
-		unsetenv("HU_PREFIX"); unsetenv("HU_TMP");
+		unsetenv("HU_PREFIX"); unsetenv("HU_USR"); unsetenv("HU_TMP");
 		return 1;
 	}
 	if (operation == "refresh") {
 		/* Check permissions */
-		if (getuid()) {std::cout << "\033[1;31mError\033[0m: Insufficient permissions." << std::endl;unsetenv("HU_PREFIX");unsetenv("HU_TMP");return 1;}
+		if (getuid()) {std::cout << "\033[1;31mError\033[0m: Insufficient permissions." << std::endl;unsetenv("HU_PREFIX");unsetenv("HU_USR");unsetenv("HU_TMP");return 1;}
 		/*Read config*/
 		std::string pathwpref = HU_PREFIX; pathwpref += "/var/lib/hupm/conf.json";
 		std::ifstream conf(pathwpref.c_str());
@@ -289,10 +291,10 @@ int main(int argc, char **argv) {
 		}
 	}
 	if (operation == "install") {
-		if (getuid()) {std::cout << "\033[1;31mError\033[0m: Insufficient permissions." << std::endl;unsetenv("HU_PREFIX");unsetenv("HU_TMP");return 1;}
+		if (getuid()) {std::cout << "\033[1;31mError\033[0m: Insufficient permissions." << std::endl;unsetenv("HU_PREFIX");unsetenv("HU_USR");unsetenv("HU_TMP");return 1;}
 		if (!pkgreq.size()) {
 			puts("\033[1;31mError\033[0m: No packages specified.");
-			unsetenv("HU_PREFIX"); unsetenv("HU_TMP");
+			unsetenv("HU_PREFIX"); unsetenv("HU_USR"); unsetenv("HU_TMP");
 			return 1;
 		}
 		/*Itera en /var/lib/hupm/db abriendo cada db
@@ -332,7 +334,7 @@ int main(int argc, char **argv) {
 			if (DEBUG) std::cout << "\033[1;32mDEBUG\033[0m: found: " << found << std::endl;
 			if (!found) {
 				std::cout << "\033[1;31mError\033[0m: Package not found: " << pkgreq[i] << std::endl;
-				unsetenv("HU_PREFIX"); unsetenv("HU_TMP");
+				unsetenv("HU_PREFIX"); unsetenv("HU_USR"); unsetenv("HU_TMP");
 				return 1;
 			} else {if (DEBUG) std::cout << "\033[1;32mDEBUG\033[0m: Found pkg\n";}
 		/*Comprueba si el paquete está instalado. Si está
@@ -423,7 +425,7 @@ int main(int argc, char **argv) {
 		char procopt = getchar();
 		if (procopt != 'y' && procopt != 'Y' && procopt != '\n') {
 			std::cout << "Aborted.\n";
-			unsetenv("HU_PREFIX"); unsetenv("HU_TMP");
+			unsetenv("HU_PREFIX"); unsetenv("HU_USR"); unsetenv("HU_TMP");
 			return 0;
 		}
 		/*<-- Begin installation -->*/
@@ -519,7 +521,7 @@ int main(int argc, char **argv) {
 						char procopt = getchar();
 						if (procopt != 'y' && procopt != 'Y' && procopt != '\n') {
 							std::cout << "Aborted.\n";
-							unsetenv("HU_PREFIX"); unsetenv("HU_TMP");
+							unsetenv("HU_PREFIX"); unsetenv("HU_USR"); unsetenv("HU_TMP");
 							return 0;
 						}
 						std::cout << "\033[3A\033[0J";
@@ -530,7 +532,7 @@ int main(int argc, char **argv) {
 						cmdres = system(cmd.c_str());
 						if (cmdres) {
 							std::cout << "\033[1;31mError\033[0m: An error ocurred while installing external dependencies.\n";
-							unsetenv("HU_PREFIX"); unsetenv("HU_TMP");
+							unsetenv("HU_PREFIX"); unsetenv("HU_USR"); unsetenv("HU_TMP");
 							return 1;
 						}
 					}
@@ -559,6 +561,6 @@ int main(int argc, char **argv) {
 	curl_easy_setopt(curl, CURLOPT_URL);
 	curl_easy_setopt(curl, CURLOPT_WRITEDATA);
 	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION);*/
-	unsetenv("HU_PREFIX"); unsetenv("HU_TMP");
+	unsetenv("HU_PREFIX"); unsetenv("HU_USR"); unsetenv("HU_TMP");
 	return 0;
 }
