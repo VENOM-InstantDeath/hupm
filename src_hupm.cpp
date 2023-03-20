@@ -11,7 +11,7 @@
 #include <curl/curl.h>
 #include <sys/stat.h>
 #define PLATFORM "debian"
-#define HU_PREFIX "/data/data/com.termux/files"
+#define HU_PREFIX "/data/data/com.termux/files/usr"
 #define HU_TMP "/data/data/com.termux/files/usr/tmp"
 int DEBUG = 0;
 
