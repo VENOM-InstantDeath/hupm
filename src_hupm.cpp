@@ -480,7 +480,7 @@ int main(int argc, char **argv) {
 		for (int i=0; i<install.pkg.size(); i++) {
 			if (DEBUG) std::cout << "\033[1;32mDEBUG\033[0m: " << install.pkg[i] << ' ' << pkgnames[i] << '\n';
 			std::cout << '(' << i+1 << '/' << install.pkg.size() << ") Extracting " << pkgnames[i] << "  ";
-			std::string pathwpref = HU_TMP; pathwpref += "/tmp/hupm";
+			std::string pathwpref = HU_TMP; pathwpref += "/hupm";
 			DIR* dir = opendir(pathwpref.c_str());
 			if (!dir) mkdir(pathwpref.c_str(), 0700);
 			std::string cmd = "tar xf "; cmd += HU_PREFIX; cmd += "/var/cache/hupm/pkg/";
@@ -494,7 +494,7 @@ int main(int argc, char **argv) {
 		if (external.size()) {
 			std::cout << ":: Installing external dependencies...\n";
 			for (int i=0; i<install.pkg.size(); i++) {
-				std::string basepath = HU_TMP; basepath += "/tmp/hupm/"; basepath += install.pkg[i];
+				std::string basepath = HU_TMP; basepath += "/hupm/"; basepath += install.pkg[i];
 				basepath += "/.huscript";
 				/*Replace external with a new vector including huscript external deps. TODO*/
 				std::string cmdreq = "bash "; cmdreq += basepath; cmdreq += " extdeps ";
